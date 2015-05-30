@@ -1,0 +1,161 @@
+#######################################################################################
+    Copyright (c) 2014, University of British Columbia (UBC)  All rights reserved.   
+                                                                                    
+    Redistribution  and  use  in  source   and  binary  forms,   with  or  without   
+    modification,  are permitted  provided that  the following conditions are met:   
+      * Redistributions   of  source   code  must  retain   the   above  copyright   
+        notice,  this   list   of   conditions   and   the  following  disclaimer.   
+      * Redistributions  in  binary  form  must  reproduce  the  above   copyright   
+        notice, this  list  of  conditions  and the  following  disclaimer in  the   
+        documentation and/or  other  materials  provided  with  the  distribution.   
+      * Neither the name of the University of British Columbia (UBC) nor the names   
+        of   its   contributors  may  be  used  to  endorse  or   promote products   
+        derived from  this  software without  specific  prior  written permission.   
+                                                                                    
+    THIS  SOFTWARE IS  PROVIDED  BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"   
+    AND  ANY EXPRESS  OR IMPLIED WARRANTIES,  INCLUDING,  BUT NOT LIMITED TO,  THE   
+    IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE   
+    DISCLAIMED.  IN NO  EVENT SHALL University of British Columbia (UBC) BE LIABLE   
+    FOR ANY DIRECT,  INDIRECT,  INCIDENTAL,  SPECIAL,  EXEMPLARY, OR CONSEQUENTIAL   
+    DAMAGES  (INCLUDING,  BUT NOT LIMITED TO,  PROCUREMENT OF  SUBSTITUTE GOODS OR   
+    SERVICES;  LOSS OF USE,  DATA,  OR PROFITS;  OR BUSINESS INTERRUPTION) HOWEVER   
+    CAUSED AND ON ANY THEORY OF LIABILITY,  WHETHER IN CONTRACT, STRICT LIABILITY,   
+    OR TORT  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE   
+    OF  THIS SOFTWARE,  EVEN  IF  ADVISED  OF  THE  POSSIBILITY  OF  SUCH  DAMAGE.   
+#######################################################################################
+
+#######################################################################################
+      Indirectly-indexed 2D BCAM (II2DCAM); University of British Columbia, 2014
+      Author: Ameer M.S. Abdelhadi (ameer@ece.ubc.ca, ameer.abdelhadi@gmail.com)
+
+      A fully  parameterized and generic Verilog implementation  of  the  suggested
+      modular SRAM-based indirectly-indexed 2D hierarchical-search BCAM ( II2DCAM )
+      ,together with other approaches are provided as open source hardware.  A run-
+      in-batch flow manager to simulate and synthesize various designs with various
+      parameters in batch using  Altera's ModelSim and  Quartus  is  also  provided.
+
+  Please refer to the full paper for more information:
+  A. M.S. Abdelhadi and G. G.F. Lemieux, "Modular SRAM-based Binary Content-Addressable
+  Memories," he 23rd IEEE International Symposium on Field-Programmable Custom
+  Computing Machines (FCCM'2015), May 2015.
+  http://www.ece.ubc.ca/~lemieux/publications/abdelhadi-fccm2015.pdf
+
+           LICENSE: BSD 3-Clause ("BSD New" or "BSD Simplified") license.
+#######################################################################################
+
+#######################################################################################
+  Files and directories in this package:
+  ======================================
+  - README             : This file!
+  - LICENSE            : BSD 3-Clause ("BSD New" or "BSD Simplified") license
+  - fccm2015-paper.pdf : The 23rd IEEE International Symposium on Field-Programmable
+                         Custom Computing Machines (FCCM'2014) paper
+  - fccm2015-slides.pdf: The 23rd IEEE International Symposium on Field-Programmable
+                         Custom Computing Machines (FCCM'2014) slides
+  - altera.12.0.ubc.csh: C-shell script: Setup environment variables and Altera 12.0
+                         CAD flow from The University of British Columbia (UBC)
+                         Change parameters to your environment if required
+  - altera.13.1.ubc.csh: C-shell script: Setup environment variables and Altera 13.1
+                         CAD flow from The University of British Columbia (UBC)
+  - altera.14.0.ubc.csh: C-shell script: Setup environment variables and Altera 14.0
+                         CAD flow from The University of British Columbia (UBC)
+  - sim                : C-shell script: A run-in-batch simulation flow manager
+  - syn                : C-shell script: A run-in-batch synthesis  flow manager
+  - mux                : C-shell script: Wide pipelined multiplexer generator
+  - pe                 : C-shell script: Priority-encoder recursive generator
+  - reduction          : C-shell script: Wide pipelined reduction function generator
+  - ii2dcam.qpf        : Quartus II project file
+  - ii2dcam.qsf        : Quartus II settings file
+  - ii2dcam.sdc        : Synopsys design constraints file;
+                         Design constraints and timing assignments
+  - config.vh          : Verilog: Generated by 'syn', contains design parameters
+  - utils.vh           : Verilog: Design utilities (pre-compile macros)
+  - bcam_bhv.v         : Behavioral description of binary CAM
+  - camctl.v           : BCAM Controller
+  - dpmlab.v           : Altera's MLAB dual-port RAM
+  - idxram.v           : indices RAM
+  - ii2dcam9b.v        : An indirectly-indexed 2D BCAM (II2DCAM) stage of 9-bit pattern
+  - ii2dcam_tb.v       : indirectly-indexed 2D BCAM (II2DCAM) Testbench
+  - ii2dcam.v          : II2DCAM top hierarchy
+  - iitram9b.v         : Indirectly-indexed transposed-RAM of 9-bits pattern
+  - iitram9bx1k.v      : Indirectly-indexed transposed-RAM of 9-b pattern /1K addresses
+  - mwm20k.v           : Altera's M20K mixed width RAM
+  - pe_bhv.v           : behavioural description of priority enconder
+  - setram.v           : Sets RAM
+  - vacram.v           : Vacancy RAM
+  - sim.res            : A list of simulation results, each run in a separate line,
+                         including all architectures.
+  - syn.res            : A list of synthesis results, each run in a separate line,
+                         including: frequency, resources usage, and runtime.
+  - log/               : A directory containing Altera's logs and reports.
+#######################################################################################
+
+#######################################################################################
+  II-2D-BCAM module instantiation:
+  ===============================================
+
+  All *.v & *.vh files in this package should be copied into your work directory.
+  Copy the following instantiation into your Verilog design, change parameters and
+  connectivity to fit your design.
+
+  // instantiate a II-2D-BCAM
+  ii2dcam #(
+    .CDEP (CDEP), // depth (k-entries, power of 2)
+    .PWID (PWID), // pattern width (9-bits multiply)
+    .PIPE (PIPE), // pipelined?
+    .REGI (REGI), // register inputs
+    .REGO (REGO)  // register outputs
+  ) ii2dcam_inst (
+    .clk  (clk  ), // clock               / input
+    .rst  (rst  ), // global reset        / input
+    .wEnb (wEnb ), // write enable        / input
+    .wAddr(wAddr), // write address       / input  [log2(CDEP)+9:0]
+    .mPatt(mPatt), // match pattern       / input  [PWID*9-1    :0]
+    .wPatt(wPatt), // write pattern       / input  [PWID*9-1    :0]
+    .match(match), // match (valid mAddr) / output
+    .mAddr(mAddr)  // match address       / output [log2(CDEP)+9:0]
+);
+#######################################################################################
+
+#######################################################################################
+  `sim`: A Run-in-batch Simulation Flow Manager
+  =============================================
+  USAGE:
+    ./sim <Pattern width List> <CAM depth list> <#Cycles> <Verbose?>
+
+  - Use comma delimited lists; no space; can be surrounded by brackets (), [], {}, <>
+  - CAM depth (k-lines), pattern width (9-bits) & #cycles are positive integers
+  - Verbose? (Binary; 0/1)
+
+  EXAMPLES:
+  ./sim 1 8 1000000 1
+     Simulate 1M cycles of a 8K lines CAM, 9 bits pattern width ,verbosed
+  ./sim 4,8 2,4 1000000 0
+     Simulate 1M cycles of CAMs with 2k or 4k lines, 36, 73, not verbosed
+
+  The following files and directories will be created after simulation :
+    - sim.res : A list of simulation results, each run in a separate line,
+                including all design styles
+#######################################################################################
+
+#######################################################################################
+  `syn`: A Run-in-batch Synthesis Flow Manager
+  ==========================================
+  USAGE:
+    ./syn <Pattern width list> <CAM depth list> <Pipelined? list>
+
+  - Use comma delimited lists; no space; can be surrounded by brackets (), [], {}, <>
+  - CAM depth (k-lines) and pattern width (9-bits) are positive integers
+  - Pipelined? (Binary; 0/1)
+
+  EXAMPLES:
+  ./syn 14 8
+     Synthesis an unpipelined BCAM with 8 K-lines, 126 bits pattern width
+  ./syn 4,7 2,4 1
+     Synthesis a pipelined BCAM with 2, 4 k-lines, 36, 63 bit pattern
+
+  The following files and directories will be created after compilation:
+    - syn.res : A list of results, each run in a separate line, including:
+                frequency, resources usage, and runtime
+    - log/    : Altera's logs and reports
+#######################################################################################

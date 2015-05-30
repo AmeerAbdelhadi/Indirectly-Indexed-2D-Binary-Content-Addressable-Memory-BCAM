@@ -1,0 +1,291 @@
+#!/bin/csh -f
+
+####################################################################################
+## Copyright (c) 2014, University of British Columbia (UBC)  All rights reserved. ##
+##                                                                                ##
+## Redistribution  and  use  in  source   and  binary  forms,   with  or  without ##
+## modification,  are permitted  provided that  the following conditions are met: ##
+##   * Redistributions   of  source   code  must  retain   the   above  copyright ##
+##     notice,  this   list   of   conditions   and   the  following  disclaimer. ##
+##   * Redistributions  in  binary  form  must  reproduce  the  above   copyright ##
+##     notice, this  list  of  conditions  and the  following  disclaimer in  the ##
+##     documentation and/or  other  materials  provided  with  the  distribution. ##
+##   * Neither the name of the University of British Columbia (UBC) nor the names ##
+##     of   its   contributors  may  be  used  to  endorse  or   promote products ##
+##     derived from  this  software without  specific  prior  written permission. ##
+##                                                                                ##
+## THIS  SOFTWARE IS  PROVIDED  BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" ##
+## AND  ANY EXPRESS  OR IMPLIED WARRANTIES,  INCLUDING,  BUT NOT LIMITED TO,  THE ##
+## IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE ##
+## DISCLAIMED.  IN NO  EVENT SHALL University of British Columbia (UBC) BE LIABLE ##
+## FOR ANY DIRECT,  INDIRECT,  INCIDENTAL,  SPECIAL,  EXEMPLARY, OR CONSEQUENTIAL ##
+## DAMAGES  (INCLUDING,  BUT NOT LIMITED TO,  PROCUREMENT OF  SUBSTITUTE GOODS OR ##
+## SERVICES;  LOSS OF USE,  DATA,  OR PROFITS;  OR BUSINESS INTERRUPTION) HOWEVER ##
+## CAUSED AND ON ANY THEORY OF LIABILITY,  WHETHER IN CONTRACT, STRICT LIABILITY, ##
+## OR TORT  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE ##
+## OF  THIS SOFTWARE,  EVEN  IF  ADVISED  OF  THE  POSSIBILITY  OF  SUCH  DAMAGE. ##
+####################################################################################
+
+####################################################################################
+##                      Run-in-batch Synthesis Flow Manager                       ##
+##                                                                                ##
+##    Author: Ameer M. Abdelhadi (ameer@ece.ubc.ca, ameer.abdelhadi@gmail.com)    ##
+##  II2DCAM SRAM-based BCAM; The University of British Columbia (UBC), Sept 2014  ##
+####################################################################################
+
+####################################################################################
+## USAGE:                                                                         ##
+##   ./syn <Pattern width list> <CAM depth list>  <Pipelined? list>               ##
+##                                                                                ##
+## - Use comma delimited lists; no space; can be surrounded by brackets ()[]{}<>. ##
+## - CAM depth (k-lines) and pattern width (9-bits) are positive integers.        ##
+## - Pipelined? (Binary; 0/1)                                                     ##
+##                                                                                ##
+## EXAMPLES:                                                                      ##
+## ./syn 14 8                                                                     ##
+##    Synthesis an unpipelined BCAM with 8 K-lines, 126 bits pattern width.       ##
+## ./syn 4,7 2,4 1                                                                ##
+##    Synthesis a pipelined BCAM with 2, 4 k-lines, 36, 63 bit pattern.           ##
+##                                                                                ##
+## The following files and directories will be created after compilation:         ##
+##   - syn.res : A list of results, each run in a separate line, including:       ##
+##               frequency, resources usage, and runtime                          ##
+##   - log/    : Altera's logs and reports                                        ##
+####################################################################################
+
+# setup environment variables and Altera's CAD tools 
+# change file to your own flow if necessary 
+source ./altera.14.0.csh
+
+# require exactly 3 arguments
+if (${#argv} != 3) then
+    printf '\x1b[%i;3%im' 1 1
+    printf 'Error: Exactly 2 arguments are required\n'
+    printf '\x1b[0m'
+    goto errorMessage
+endif
+
+# convert each argument list into a c-shell list (remove commas and etc.)
+set PATWLST = (`echo ${argv[1]} | tr ",()[]{}<>" " "`)
+set CAMDLST = (`echo ${argv[2]} | tr ",()[]{}<>" " "`)
+set PIPELST = (`echo ${argv[3]} | tr ",()[]{}<>" " "`)
+
+# check arguments correctness (positive integer numbers)
+foreach ARGVAL ($CAMDLST $PATWLST)
+  set ARGVALIsNumber=`echo $ARGVAL | egrep -c '^[0-9]+$'`
+  if ($ARGVALIsNumber != 1) then
+    printf '\x1b[%i;3%im' 1 1
+    printf "Error (${ARGVAL}): CAM depth and pattern width arguments should be possitive integer numbers\n"
+    printf '\x1b[0m'
+    goto errorMessage
+  endif
+end
+
+# check pipelining argument correctness
+foreach ARGVAL ($PIPELST)
+  if ( ($ARGVAL != 0) & ($ARGVAL != 1) ) then
+    printf '\x1b[%i;3%im' 1 1
+    printf "Error (${ARGVAL}): Pipelining argument should be a binary; 0 or 1\n"
+    printf '\x1b[0m'
+    goto errorMessage
+  endif
+end
+
+# total different designs
+@ FlowOprNum = ( (${#CAMDLST}) * (${#PATWLST}) * (${#PIPELST}) )
+@ FlowOprCnt = 0
+
+printf '\x1b[%i;3%im' 7 4
+printf "= Synthesis in batch with the following parameters:\n"
+printf "= CAM depth          : $CAMDLST\n"
+printf "= Pattern width      : $PATWLST\n"
+printf "= Pipelined?         : $PIPELST\n"
+printf '\x1b[0m'
+
+#print header
+set FML  = `grep " FAMILY " ii2dcam.qsf | cut -d\"  -f2`
+set DEV  = `grep " DEVICE " ii2dcam.qsf | cut -d" " -f4`
+set TTL1 = '                      Fmax-MHz 0.9v     Combinational ALUT usage for logic                               LABs           I/O Pins                 BRAM Bits Utiliz.             \n'
+set TTL2 = 'CAM     Pattern Pipe- ------------- ----------------------------------------- Route  Total  Total  ----------------- -------------- BRAM M L A B -----------------      Runtime\n'
+set TTL3 = 'Depth-k Width   lined T = 0c T= 85c Total  7-LUTs 6-LUTs 5-LUTs 4-LUTs 3-LUTs ALUTs  Reg.   ALMs   Total Logic Mem.  Tot. Clk  Ded. M20K B i t s Utilized Occupied DSPs Minutes\n'
+set SEPR = '======= ======= ===== ====== ====== ====== ====== ====== ====== ====== ====== ====== ====== ====== ===== ===== ===== ==== ==== ==== ==== ======= ======== ======== ==== =======\n'
+set FRMT = (`echo $SEPR| tr " " "\n" | perl -nle '$a= length; print "%-${a}s"' | tr "\n" " "`)
+if !(-f syn.res) then
+  printf "$FML $DEV\n\n$TTL1$TTL2$TTL3$SEPR" >! syn.res
+endif
+
+#initialize result values
+set val  = (`repeat 36 echo "N/A"`)
+
+# create log directoy
+if !(-d log) mkdir log
+
+# operate on all different RAM parameters
+foreach CURPATW ($PATWLST)
+  foreach CURCAMD ($CAMDLST)
+    foreach CURPIPE ($PIPELST)
+
+            @ FlowOprCnt++
+            set curRunStartTime      = `date +%T`
+            set curRunStartTimeStamp = `date +%s`
+            set RUNNAME = "${CURPATW}x${CURCAMD}-${CURPIPE}"
+
+            # Pattern width in bits
+            set PATWBIT  = `expr $CURPATW \* 9`
+
+            printf '\x1b[%i;3%im' 7 2
+            printf "\n== Starting Synthesis  (${FlowOprCnt}/${FlowOprNum}) @${curRunStartTime}: [Pattern Width:$PATWBIT; CAM Depth:${CURCAMD}k; Pipelined?:${CURPIPE}]\n"
+            printf '\x1b[0m'
+
+            # create configuration file base on architectural
+            if (-e config.vh) \rm -f config.vh
+            printf '// BCAM Configuration File\n'                                    >! config.vh
+            printf '// Generated by flow manager before logic synthesis\n'           >> config.vh
+            printf '`define CDEP %s\t// CAM depth (k-lines) \n'            $CURCAMD  >> config.vh
+            printf '`define PWID %s\t// Pattern width (9-bit)\n'           $CURPATW  >> config.vh
+            printf '`define PIPE %s\t// Pipelined?\n'                      $CURPIPE  >> config.vh
+            printf '`define REGI %s\t// register inputs?\n'                1         >> config.vh
+            printf '`define REGO %s\t// register outputs?\n'               1         >> config.vh
+
+            # clean previous report files before run
+            if (-d output_files) \rm -rf output_files
+
+            # clean previous values before run
+            set val  = (`repeat 26 echo "N/A"`)
+
+            # Generate priority encoders / mux tree / reduction or tree
+            if (-e pe_cam.v           ) \rm -f pe_cam.v
+            if (-e pe_multiOcc.v      ) \rm -f pe_multiOcc.v
+            if (-e pe_vac.v           ) \rm -f pe_vac.v
+            if (-e mux_newIdx.v       ) \rm -f mux_newIdx.v
+            if (-e mux_oldIdx.v       ) \rm -f mux_oldIdx.v
+            if (-e mux_oldPatt.v      ) \rm -f mux_oldPatt.v
+            if (-e mux_oldPattV.v     ) \rm -f mux_oldPattV.v
+            if (-e reduction_or_OPMO.v) \rm -f reduction_or_OPMO.v
+            if ($CURPIPE) then
+              ./pe        `expr $CURCAMD \* 1024` 0 0 1       CASE cam
+              ./pe        32                      1 1 1       CASE multiOcc
+              ./pe        32                      1 1 1       CASE vac
+              ./mux       32 9 4                  1 1 1            oldPatt
+              ./mux       32 1 4                  1 1 1            oldPattV
+              ./mux       32 5 4                  1 1 1            oldIdx
+              ./mux       32 5 4                  1 1 1            newIdx
+              ./reduction 32 6                    1 1 1       OR   or_OPMO
+            else
+              ./pe        `expr $CURCAMD \* 1024` 0 0 9999    CASE cam
+              ./pe        32                      0 0 9999    CASE multiOcc
+              ./pe        32                      0 0 9999    CASE vac
+              ./mux       32 9 4                  0 0 9999         oldPatt
+              ./mux       32 1 4                  0 0 9999         oldPattV
+              ./mux       32 5 4                  0 0 9999         oldIdx
+              ./mux       32 5 4                  0 0 9999         newIdx
+              ./reduction 32 6                    0 0 9999    OR   or_OPMO
+            endif
+
+            # run current synthesis
+            quartus_map --64bit --read_settings_files=on --write_settings_files=off ii2dcam -c ii2dcam  | tee log/${RUNNAME}.map.log
+            quartus_cdb --64bit --merge ii2dcam -c ii2dcam                                              | tee log/${RUNNAME}.cdb.log
+            quartus_fit --64bit --read_settings_files=off --write_settings_files=off ii2dcam -c ii2dcam | tee log/${RUNNAME}.fit.log
+            quartus_sta --64bit ii2dcam -c ii2dcam                                                      | tee log/${RUNNAME}.sta.log
+
+            # calculate runtime and generate a report / per run
+            set curRunFinishTime      = `date +%T`
+            set curRunFinishTimeStamp = `date +%s`
+            @   curRunTimeDiff        = $curRunFinishTimeStamp - $curRunStartTimeStamp
+            set curRuntimeMin         = `echo "scale=2;$curRunTimeDiff/60"|bc`
+
+            # collect data
+            set val[1]  = $CURCAMD
+            set val[2]  = $PATWBIT
+            set val[3]  = $CURPIPE
+            if (-f output_files/ii2dcam.sta.rpt) then
+              set val[4]  = `grep -a4 "Slow 900mV 0C Model Fmax Summary"  output_files/ii2dcam.sta.rpt | tail -1 | cut -d" " -f2 | tr -d " \n"`; 
+              set val[5]  = `grep -a4 "Slow 900mV 85C Model Fmax Summary" output_files/ii2dcam.sta.rpt | tail -1 | cut -d" " -f2 | tr -d " \n"`
+            endif
+            if (-f output_files/ii2dcam.fit.rpt) then
+              grep -A92 "; Fitter Resource Usage Summary" output_files/ii2dcam.fit.rpt >! __fit_rpt__.tmp
+              set val[6]  = `grep "ALUT usage for logic"        __fit_rpt__.tmp | cut -d";" -f3 | cut -d"/" -f1| tr -d ", "`
+              set val[7]  = `grep "7 input"                     __fit_rpt__.tmp | cut -d";" -f3 | cut -d"/" -f1| tr -d ", "`
+              set val[8]  = `grep "6 input"                     __fit_rpt__.tmp | cut -d";" -f3 | cut -d"/" -f1| tr -d ", "`
+              set val[9]  = `grep "5 input"                     __fit_rpt__.tmp | cut -d";" -f3 | cut -d"/" -f1| tr -d ", "`
+              set val[10] = `grep "4 input"                     __fit_rpt__.tmp | cut -d";" -f3 | cut -d"/" -f1| tr -d ", "`
+              set val[11] = `grep "<=3 input"                   __fit_rpt__.tmp | cut -d";" -f3 | cut -d"/" -f1| tr -d ", "`
+              set val[12] = `grep "ALUT usage for route"        __fit_rpt__.tmp | cut -d";" -f3 | cut -d"/" -f1| tr -d ", "`
+              set val[13] = `grep "Dedicated logic registers"   __fit_rpt__.tmp | cut -d";" -f3 | cut -d"/" -f1| tr -d ", "`
+              set val[14] = `grep "ALMs needed \["              __fit_rpt__.tmp | cut -d";" -f3 | cut -d"/" -f1| tr -d ", "`
+              set val[15] = `grep "Total LABs"                  __fit_rpt__.tmp | cut -d";" -f3 | cut -d"/" -f1| tr -d ", "`
+              set val[16] = `grep "Logic LABs"                  __fit_rpt__.tmp | cut -d";" -f3 | cut -d"/" -f1| tr -d ", "`
+              set val[17] = `grep "Memory LABs"                 __fit_rpt__.tmp | cut -d";" -f3 | cut -d"/" -f1| tr -d ", "`
+              set val[18] = `grep "I/O pins"                    __fit_rpt__.tmp | cut -d";" -f3 | cut -d"/" -f1| tr -d ", "`
+              set val[19] = `grep "Clock pins"                  __fit_rpt__.tmp | cut -d";" -f3 | cut -d"/" -f1| tr -d ", "`
+              set val[20] = `grep "Dedicated input"             __fit_rpt__.tmp | cut -d";" -f3 | cut -d"/" -f1| tr -d ", "`
+              set val[21] = `grep "M20K"                        __fit_rpt__.tmp | cut -d";" -f3 | cut -d"/" -f1| tr -d ", "`
+              set val[22] = `grep "MLAB"                        __fit_rpt__.tmp | cut -d";" -f3 | cut -d"/" -f1| tr -d ", "`
+              set val[23] = `grep "block memory bits"           __fit_rpt__.tmp | cut -d";" -f3 | cut -d"/" -f1| tr -d ", "`
+              set val[24] = `grep "block memory implementation" __fit_rpt__.tmp | cut -d";" -f3 | cut -d"/" -f1| tr -d ", "`
+              set val[25] = `grep "DSP"                         __fit_rpt__.tmp | cut -d";" -f3 | cut -d"/" -f1| tr -d ", "`
+              set val[26] = $curRuntimeMin
+              \rm -rf __fit_rpt__.tmp
+            endif
+            foreach i (`seq 26`)
+              if ( $val[$i] == "" ) set val[$i] = "N/A"
+            end
+
+            # print to report
+            printf "$FRMT\n" $val >> syn.res
+
+            # move log files into log directory
+            if (-d output_files) then
+              cd output_files
+              foreach fileName (*.*)
+                if (-f $fileName) mv $fileName "../log/${RUNNAME}.`echo $fileName | cut -d. -f2-`"
+              end
+              cd ../
+              \rm -rf output_files
+            endif
+
+            printf '\x1b[%i;3%im' 7 2
+            printf "== Synthesis (${FlowOprCnt}/${FlowOprNum}) Completed after ${curRuntimeMin} minutes: [Pattern Width:$PATWBIT; CAM Depth:${CURCAMD}k; Pipelined?:${CURPIPE}]\n"
+            printf '\x1b[0m'
+    end
+  end
+end
+
+# clean unrequired files / after run
+if (-e config.vh          ) \rm -f config.vh
+if (-e pe_cam.v           ) \rm -f pe_cam.v
+if (-e pe_multiOcc.v      ) \rm -f pe_multiOcc.v
+if (-e pe_vac.v           ) \rm -f pe_vac.v
+if (-e mux_newIdx.v       ) \rm -f mux_newIdx.v
+if (-e mux_oldIdx.v       ) \rm -f mux_oldIdx.v
+if (-e mux_oldPatt.v      ) \rm -f mux_oldPatt.v
+if (-e mux_oldPattV.v     ) \rm -f mux_oldPattV.v
+if (-e reduction_or_OPMO.v) \rm -f reduction_or_OPMO.v
+if (-d             db     ) \rm -rf             db
+if (-d incremental_db     ) \rm -rf incremental_db
+
+goto scriptEnd
+
+# error message
+
+errorMessage:
+printf '\x1b[%i;3%im' 1 1
+cat << EOH
+USAGE:
+  ./syn <Pattern width list> <CAM depth list>  <Pipelined? list>
+- Use comma delimited lists; no space; can be surrounded by brackets ()[]{}<>.
+- CAM depth (k-lines) and pattern width (9-bits) are positive integers.
+- Pipelined? (Binary; 0/1)
+EXAMPLES:
+./syn 14 8
+   Synthesis an unpipelined BCAM with 8 K-lines, 126 bits pattern width.
+./syn 4,7 2,4 1
+   Synthesis a pipelined BCAM with 2, 4 k-lines, 36, 63 bit pattern.
+The following files and directories will be created after compilation:
+  - syn.res : A list of results, each run in a separate line, including:
+              frequency, resources usage, and runtime
+  - log/    : Altera's logs and reports
+EOH
+printf '\x1b[0m'
+scriptEnd:
+
